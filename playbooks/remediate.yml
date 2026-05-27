@@ -1,0 +1,70 @@
+---
+- name: Remediate configuration drift
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Log remediation start
+      ansible.builtin.debug:
+        msg: "🔧 Starting remediation on {{ inventory_hostname }} at {{ ansible_date_time.iso8601 }}"
+
+    - name: Re-apply sysctl hardening
+      ansible.posix.sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        sysctl_set: true
+        reload: true
+      loop:
+        - { key: 'net.ipv4.ip_forward', value: '0' }
+        - { key: 'net.ipv4.conf.all.send_redirects', value: '0' }
+        - { key: 'net.ipv4.conf.default.send_redirects', value: '0' }
+        - { key: 'kernel.randomize_va_space', value: '2' }
+
+    - name: Ensure required services running
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - auditd
+        - rsyslog
+
+    - name: Stop prohibited services
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - telnet
+        - rsh
+      ignore_errors: true
+
+    - name: Re-apply SSH hardening
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+      loop:
+        - { regexp: '^PermitRootLogin', line: 'PermitRootLogin no' }
+        - { regexp: '^PasswordAuthentication', line: 'PasswordAuthentication no' }
+        - { regexp: '^X11Forwarding', line: 'X11Forwarding no' }
+        - { regexp: '^MaxAuthTries', line: 'MaxAuthTries 4' }
+      notify: Restart sshd
+
+    - name: Record remediation timestamp
+      ansible.builtin.copy:
+        content: "Remediated at {{ ansible_date_time.iso8601 }} by AAP EDA"
+        dest: /etc/aap_last_remediation
+        mode: '0644'
+
+    - name: Log remediation complete
+      ansible.builtin.debug:
+        msg: "✅ Remediation complete on {{ inventory_hostname }}"
+
+  handlers:
+    - name: Restart sshd
+      ansible.builtin.service:
+        name: sshd
+        state: restarted
