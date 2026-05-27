@@ -1,0 +1,101 @@
+---
+- name: Detect configuration drift against baseline
+  hosts: all
+  become: true
+  vars:
+    expected_sysctl:
+      net.ipv4.ip_forward: "0"
+      net.ipv4.conf.all.send_redirects: "0"
+      kernel.randomize_va_space: "2"
+    required_services:
+      - auditd
+      - rsyslog
+    prohibited_services:
+      - telnet
+      - rsh
+    required_packages:
+      - aide
+      - audit
+      - rsyslog
+
+  tasks:
+    - name: Initialise drift report
+      ansible.builtin.set_fact:
+        drift_detected: false
+        drift_items: []
+
+    - name: Check sysctl values
+      ansible.builtin.command:
+        cmd: "sysctl -n {{ item.key }}"
+      register: sysctl_results
+      loop: "{{ expected_sysctl | dict2items }}"
+      changed_when: false
+
+    - name: Flag sysctl drift
+      ansible.builtin.set_fact:
+        drift_detected: true
+        drift_items: "{{ drift_items + ['SYSCTL DRIFT: ' + item.item.key + ' is ' + item.stdout + ' expected ' + item.item.value] }}"
+      loop: "{{ sysctl_results.results }}"
+      when: item.stdout != item.item.value
+
+    - name: Check required services are active
+      ansible.builtin.service_facts:
+
+    - name: Flag service drift — required service not running
+      ansible.builtin.set_fact:
+        drift_detected: true
+        drift_items: "{{ drift_items + ['SERVICE DRIFT: ' + item + ' is not running'] }}"
+      loop: "{{ required_services }}"
+      when: >
+        ansible_facts.services[item + '.service'] is not defined or
+        ansible_facts.services[item + '.service'].state != 'running'
+
+    - name: Flag service drift — prohibited service running
+      ansible.builtin.set_fact:
+        drift_detected: true
+        drift_items: "{{ drift_items + ['PROHIBITED SERVICE: ' + item + ' is running'] }}"
+      loop: "{{ prohibited_services }}"
+      when: >
+        ansible_facts.services[item + '.service'] is defined and
+        ansible_facts.services[item + '.service'].state == 'running'
+
+    - name: Check SSH hardening
+      ansible.builtin.command:
+        cmd: grep -E "^PermitRootLogin|^PasswordAuthentication|^X11Forwarding" /etc/ssh/sshd_config
+      register: ssh_config
+      changed_when: false
+      failed_when: false
+
+    - name: Flag SSH drift
+      ansible.builtin.set_fact:
+        drift_detected: true
+        drift_items: "{{ drift_items + ['SSH DRIFT: PermitRootLogin not hardened'] }}"
+      when: "'PermitRootLogin no' not in ssh_config.stdout"
+
+    - name: Print drift summary
+      ansible.builtin.debug:
+        msg: "{{ drift_items }}"
+      when: drift_detected
+
+    - name: Print clean status
+      ansible.builtin.debug:
+        msg: "✅ No drift detected — node is compliant with baseline"
+      when: not drift_detected
+
+    - name: Write drift report to node
+      ansible.builtin.copy:
+        content: |
+          DRIFT REPORT — {{ ansible_date_time.iso8601 }}
+          Host: {{ inventory_hostname }}
+          Drift Detected: {{ drift_detected }}
+          Items:
+          {% for item in drift_items %}
+          - {{ item }}
+          {% endfor %}
+        dest: /tmp/drift_report.txt
+        mode: '0644'
+
+    - name: Fail job if drift detected — surfaces in AAP dashboard
+      ansible.builtin.fail:
+        msg: "DRIFT DETECTED on {{ inventory_hostname }} — {{ drift_items | length }} issue(s) found. EDA will trigger remediation."
+      when: drift_detected
