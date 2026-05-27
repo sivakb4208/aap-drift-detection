@@ -1,0 +1,76 @@
+---
+- name: Apply and verify baseline configuration
+  hosts: all
+  become: true
+  vars:
+    baseline_packages:
+      - aide
+      - audispd-plugins
+      - audit
+      - rsyslog
+    baseline_services_enabled:
+      - auditd
+      - rsyslog
+    baseline_services_disabled:
+      - telnet
+      - rsh
+    sysctl_settings:
+      net.ipv4.ip_forward: 0
+      net.ipv4.conf.all.send_redirects: 0
+      net.ipv4.conf.default.send_redirects: 0
+      kernel.randomize_va_space: 2
+
+  tasks:
+    - name: Ensure baseline packages are installed
+      ansible.builtin.package:
+        name: "{{ baseline_packages }}"
+        state: present
+
+    - name: Ensure required services are running and enabled
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop: "{{ baseline_services_enabled }}"
+
+    - name: Ensure insecure services are stopped and disabled
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop: "{{ baseline_services_disabled }}"
+      ignore_errors: true
+
+    - name: Apply sysctl hardening settings
+      ansible.posix.sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        sysctl_set: true
+        reload: true
+      loop: "{{ sysctl_settings | dict2items }}"
+
+    - name: Set SSH hardening
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+      loop:
+        - { regexp: '^PermitRootLogin', line: 'PermitRootLogin no' }
+        - { regexp: '^PasswordAuthentication', line: 'PasswordAuthentication no' }
+        - { regexp: '^X11Forwarding', line: 'X11Forwarding no' }
+        - { regexp: '^MaxAuthTries', line: 'MaxAuthTries 4' }
+      notify: Restart sshd
+
+    - name: Record baseline timestamp
+      ansible.builtin.copy:
+        content: "{{ ansible_date_time.iso8601 }}"
+        dest: /etc/aap_baseline_applied
+        mode: '0644'
+
+  handlers:
+    - name: Restart sshd
+      ansible.builtin.service:
+        name: sshd
+        state: restarted
