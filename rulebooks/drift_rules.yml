@@ -1,32 +1,15 @@
 ---
-- name: Respond to configuration drift events
+- name: Drift Detection Rulebook
   hosts: all
   sources:
-    - ansible.eda.aws_sqs_queue:
-        region: us-east-1
-        queue_url: "{{ sqs_queue_url }}"
-      filters:
-        - ansible.eda.json_filter:
-            include_keys:
-              - event_type
-              - host
-              - drift_items
+    - ansible.eda.watchdog:
+        path: /etc/ssh/sshd_config
+        recursive: false
 
   rules:
-    - name: Trigger remediation on drift detected
-      condition: event.event_type == "drift_detected"
+    - name: Detect SSH config change
+      condition: event.change == "modified"
       action:
         run_job_template:
-          name: "4 - Remediate Drift"
+          name: "3 - Remediate Drift"
           organization: Default
-          job_args:
-            limit: "{{ event.host }}"
-
-    - name: Trigger verification after remediation
-      condition: event.event_type == "remediation_complete"
-      action:
-        run_job_template:
-          name: "5 - Post-Change Verification"
-          organization: Default
-          job_args:
-            limit: "{{ event.host }}"
