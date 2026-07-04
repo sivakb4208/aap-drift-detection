@@ -1,0 +1,26 @@
+---
+- name: Create or Close ServiceNow Incident
+  hosts: localhost
+  gather_facts: no
+  become: no
+  tasks:
+    - name: Create ServiceNow Incident for drift
+      uri:
+        url: "{{ sn_host }}/api/now/table/incident"
+        method: POST
+        user: "{{ sn_username }}"
+        password: "{{ sn_password }}"
+        force_basic_auth: yes
+        body_format: json
+        body:
+          short_description: "[AIOps] Configuration Drift Detected on {{ target_host }}"
+          description: "Automated drift detection found issues on {{ target_host }}. Remediation attempted by AAP. Please verify."
+          impact: "2"
+          urgency: "2"
+          caller_id: "admin"
+        status_code: 201
+      register: snow_response
+
+    - name: Print Incident Number
+      debug:
+        msg: "Incident created: {{ snow_response.json.result.number }}"
