@@ -7,23 +7,9 @@
         limit: 100
         delay: 60
   rules:
-    - name: Trigger drift detection
+    - name: Trigger drift detection workflow
       condition: event.i >= 0
       action:
         run_job_template:
-          name: "2-Detect Drift"
-          organization: Default
-
-    - name: Trigger remediation on drift detected
-      condition: event.job.status == "failed" and event.job.name == "2-Detect Drift"
-      action:
-        run_job_template:
-          name: "3-Remediate Drift"
-          organization: Default
-
-    - name: Trigger verification after remediation
-      condition: event.job.status == "successful" and event.job.name == "3-Remediate Drift"
-      action:
-        run_job_template:
-          name: "4-Verify Compliance"
+          name: "Drift-Detection-Workflow"
           organization: Default
